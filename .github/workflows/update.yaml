@@ -1,0 +1,146 @@
+name: Update Exploit-DB CVE Database
+
+on:
+  schedule:
+    # Run daily at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger
+  push:
+    branches:
+      - main
+    paths:
+      - 'process_exploitdb.py'
+
+jobs:
+  update-database:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+      
+      - name: Run Exploit-DB processor
+        run: |
+          python process_exploitdb.py
+      
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet exploitdb_cves.json exploitdb_cves_compact.json; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+          fi
+      
+      - name: Get statistics
+        if: steps.check_changes.outputs.changed == 'true'
+        id: stats
+        run: |
+          TOTAL_CVES=$(python3 -c "import json; data=json.load(open('exploitdb_cves.json')); print(data['metadata']['total_cves'])")
+          TOTAL_EXPLOITS=$(python3 -c "import json; data=json.load(open('exploitdb_cves.json')); print(data['metadata']['total_exploits'])")
+          echo "total_cves=$TOTAL_CVES" >> $GITHUB_OUTPUT
+          echo "total_exploits=$TOTAL_EXPLOITS" >> $GITHUB_OUTPUT
+      
+      - name: Generate release tag
+        if: steps.check_changes.outputs.changed == 'true'
+        id: tag
+        run: |
+          TAG_NAME="v$(date -u +'%Y.%m.%d.%H%M')"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Generated tag: $TAG_NAME"
+      
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add exploitdb_cves.json exploitdb_cves_compact.json
+          git commit -m "Update Exploit-DB CVE database - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          git push
+      
+      - name: Create Release
+        if: steps.check_changes.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: Exploit-DB CVE Database - ${{ steps.tag.outputs.tag_name }}
+          body: |
+            ## 📊 Exploit-DB CVE Database Update
+            
+            **Generated:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+            
+            ### Statistics
+            - **Total CVEs:** ${{ steps.stats.outputs.total_cves }}
+            - **Total Exploits:** ${{ steps.stats.outputs.total_exploits }}
+            
+            ### Files
+            - `exploitdb_cves.json` - Full database with metadata (15+ MB)
+            - `exploitdb_cves_compact.json` - Compact version for API use (8+ MB)
+            
+            ### Usage
+            
+            **Direct Download (Latest Release):**
+            ```
+            https://github.com/${{ github.repository }}/releases/latest/download/exploitdb_cves_compact.json
+            ```
+            
+            **Raw GitHub (Main Branch):**
+            ```
+            https://raw.githubusercontent.com/${{ github.repository }}/main/exploitdb_cves_compact.json
+            ```
+            
+            ### Integration Example (n8n)
+            
+            ```javascript
+            const cveId = "CVE-2021-44228";
+            const exploitDbData = $items("Fetch Exploit-DB JSON")[0].json;
+            const exploits = exploitDbData[cveId] || [];
+            const hasExploitDb = exploits.length > 0;
+            console.log(`${cveId} has ${exploits.length} Exploit-DB entries`);
+            ```
+            
+            ---
+            
+            **Source:** [Exploit-DB](https://www.exploit-db.com/)
+            **Automated by:** GitHub Actions
+          files: |
+            exploitdb_cves.json
+            exploitdb_cves_compact.json
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Summary
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          echo "## ✅ Database Updated Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ steps.tag.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Total CVEs:** ${{ steps.stats.outputs.total_cves }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Exploits:** ${{ steps.stats.outputs.total_exploits }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Release URL:** https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+      
+      - name: No changes summary
+        if: steps.check_changes.outputs.changed == 'false'
+        run: |
+          echo "## ℹ️ No Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The Exploit-DB database has not changed since the last update." >> $GITHUB_STEP_SUMMARY
