@@ -40,7 +40,7 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
-          git add exploitdb_cves.json exploitdb_cves_compact.json
+          git add exploitdb_cves.json
           if git diff --cached --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
             echo "No changes detected"
@@ -55,10 +55,13 @@ jobs:
         run: |
           TOTAL_CVES=$(python3 -c "import json; data=json.load(open('exploitdb_cves.json')); print(data['metadata']['total_cves'])")
           TOTAL_EXPLOITS=$(python3 -c "import json; data=json.load(open('exploitdb_cves.json')); print(data['metadata']['total_exploits'])")
+          YEAR_RANGE=$(python3 -c "import json; data=json.load(open('exploitdb_cves.json')); print(data['metadata']['year_range'])")
           echo "total_cves=$TOTAL_CVES" >> $GITHUB_OUTPUT
           echo "total_exploits=$TOTAL_EXPLOITS" >> $GITHUB_OUTPUT
+          echo "year_range=$YEAR_RANGE" >> $GITHUB_OUTPUT
           echo "Total CVEs: $TOTAL_CVES"
           echo "Total Exploits: $TOTAL_EXPLOITS"
+          echo "Year Range: $YEAR_RANGE"
       
       - name: Generate release tag
         if: steps.check_changes.outputs.changed == 'true'
@@ -73,7 +76,7 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git commit -m "Update Exploit-DB CVE database - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" -m "Total CVEs: ${{ steps.stats.outputs.total_cves }}" -m "Total Exploits: ${{ steps.stats.outputs.total_exploits }}"
+          git commit -m "Update Exploit-DB CVE database - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" -m "Year Range: ${{ steps.stats.outputs.year_range }}" -m "Total CVEs: ${{ steps.stats.outputs.total_cves }}" -m "Total Exploits: ${{ steps.stats.outputs.total_exploits }}"
           git push
       
       - name: Create Release
@@ -88,23 +91,23 @@ jobs:
             **Generated:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
             
             ### Statistics
+            - **Year Range:** ${{ steps.stats.outputs.year_range }}
             - **Total CVEs:** ${{ steps.stats.outputs.total_cves }}
             - **Total Exploits:** ${{ steps.stats.outputs.total_exploits }}
             
-            ### Files
-            - `exploitdb_cves.json` - Full database with metadata (~15 MB)
-            - `exploitdb_cves_compact.json` - Compact version for API use (~8 MB)
+            ### File
+            - `exploitdb_cves.json` - Complete database with metadata
             
             ### Usage
             
             **Direct Download (Latest Release):**
             ```
-            https://github.com/${{ github.repository }}/releases/latest/download/exploitdb_cves_compact.json
+            https://github.com/${{ github.repository }}/releases/latest/download/exploitdb_cves.json
             ```
             
             **Raw GitHub (Main Branch - Always Latest):**
             ```
-            https://raw.githubusercontent.com/${{ github.repository }}/main/exploitdb_cves_compact.json
+            https://raw.githubusercontent.com/${{ github.repository }}/main/exploitdb_cves.json
             ```
             
             ### Integration Example (n8n)
@@ -115,45 +118,61 @@ jobs:
             
             // Check for CVE in the loop
             const cveId = "CVE-2021-44228";
-            const exploits = exploitDbData[cveId] || [];
-            const hasExploitDb = exploits.length > 0;
+            const cveEntry = exploitDbData.cves[cveId];
             
-            console.log(`${cveId} has ${exploits.length} Exploit-DB entries`);
-            
-            // Access exploit details
-            if (hasExploitDb) {
-              exploits.forEach(exploit => {
+            if (cveEntry) {
+              console.log(`${cveId} has ${cveEntry.exploit_count} Exploit-DB entries`);
+              
+              // Access exploit details
+              cveEntry.exploits.forEach(exploit => {
                 console.log(`  - ${exploit.description}`);
-                console.log(`    URL: ${exploit.url}`);
+                exploit.urls.forEach(url => {
+                  console.log(`    URL: ${url}`);
+                });
               });
             }
             ```
             
-            ### Example CVE Entry
+            ### JSON Structure
             
             ```json
             {
-              "CVE-2021-44228": [
-                {
-                  "edb_id": "50592",
-                  "description": "Apache Log4j 2 - Remote Code Execution (RCE)",
-                  "date": "2021-12-14",
-                  "author": "kozmer",
-                  "type": "remote",
-                  "platform": "java",
-                  "url": "https://www.exploit-db.com/exploits/50592"
+              "metadata": {
+                "generated_at": "2025-11-16T19:00:00Z",
+                "source": "Exploit-DB",
+                "year_range": "2015-2025",
+                "total_cves": 15000,
+                "total_exploits": 20000
+              },
+              "cves": {
+                "CVE-2021-44228": {
+                  "cve_id": "CVE-2021-44228",
+                  "exploit_count": 15,
+                  "exploits": [
+                    {
+                      "edb_id": "50592",
+                      "description": "Apache Log4j 2 - Remote Code Execution (RCE)",
+                      "date": "2021-12-14",
+                      "author": "kozmer",
+                      "type": "remote",
+                      "platform": "java",
+                      "urls": [
+                        "https://www.exploit-db.com/exploits/50592"
+                      ]
+                    }
+                  ]
                 }
-              ]
+              }
             }
             ```
             
             ---
             
             **Source:** [Exploit-DB](https://www.exploit-db.com/)  
-            **Automated by:** GitHub Actions
+            **Automated by:** GitHub Actions  
+            **Filter:** Last 10 years only
           files: |
             exploitdb_cves.json
-            exploitdb_cves_compact.json
           draft: false
           prerelease: false
         env:
@@ -162,21 +181,22 @@ jobs:
       - name: Summary
         if: steps.check_changes.outputs.changed == 'true'
         run: |
-          echo "##  Database Updated Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "## Database Updated Successfully" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ steps.tag.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Year Range:** ${{ steps.stats.outputs.year_range }}" >> $GITHUB_STEP_SUMMARY
           echo "**Total CVEs:** ${{ steps.stats.outputs.total_cves }}" >> $GITHUB_STEP_SUMMARY
           echo "**Total Exploits:** ${{ steps.stats.outputs.total_exploits }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Release URL:** https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Download URLs:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Latest Release: https://github.com/${{ github.repository }}/releases/latest/download/exploitdb_cves_compact.json" >> $GITHUB_STEP_SUMMARY
-          echo "- Main Branch: https://raw.githubusercontent.com/${{ github.repository }}/main/exploitdb_cves_compact.json" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest Release: https://github.com/${{ github.repository }}/releases/latest/download/exploitdb_cves.json" >> $GITHUB_STEP_SUMMARY
+          echo "- Main Branch: https://raw.githubusercontent.com/${{ github.repository }}/main/exploitdb_cves.json" >> $GITHUB_STEP_SUMMARY
       
       - name: No changes summary
         if: steps.check_changes.outputs.changed == 'false'
         run: |
-          echo "##  No Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "## No Changes Detected" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The Exploit-DB database has not changed since the last update." >> $GITHUB_STEP_SUMMARY
